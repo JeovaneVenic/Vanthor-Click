@@ -1,0 +1,11 @@
+# Ambiente e caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Saídas temporárias do empacotamento (o build real fica em %LOCALAPPDATA%\VanthorBuild)
+build/
+dist/
+
+# Obs.: a pasta Instalador/ É versionada de propósito: o instalador fica disponível no repositório.
