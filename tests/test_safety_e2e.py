@@ -21,13 +21,13 @@ from vanthor.persistence.database import Database  # noqa: E402
 from vanthor.persistence.repositories import AppSettings  # noqa: E402
 from vanthor.rules.models import FireMode, TriggerSettings  # noqa: E402
 from vanthor.vision.color import ColorCondition  # noqa: E402
-from vanthor.winsys.input import Win32Input  # noqa: E402
 
+from .native import REAL_DESKTOP, input_backend_class, real_input  # noqa: E402
 from .test_capture_dpi import physical_rect_of  # noqa: E402
 from .test_input_real import Target, target  # noqa: E402, F401
 from .test_rules_e2e import Lamp, rgb  # noqa: E402
 
-pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="tela e entrada reais do Windows")
+pytestmark = pytest.mark.skipif(not REAL_DESKTOP, reason="tela e entrada reais (Windows ou Linux/X11)")
 GREEN = QColor("#22C55E")
 
 
@@ -44,13 +44,13 @@ def app_window(qtbot: QtBot, tmp_path: Path) -> Iterator[object]:
     qtbot.addWidget(window)
     window.showMinimized()
     qtbot.wait(100)
-    original = InputController(Win32Input()).cursor()
+    original = InputController(real_input()).cursor()
     yield window
     ctx.session.shutdown()
     window._indicator.close()  # noqa: SLF001
     window._tray.hide()  # noqa: SLF001
     db.close()
-    InputController(Win32Input()).move(*original)
+    InputController(real_input()).move(*original)
 
 
 def green_lamp(qtbot: QtBot, y: int, color: QColor = GREEN) -> Lamp:
@@ -67,12 +67,13 @@ def green_lamp(qtbot: QtBot, y: int, color: QColor = GREEN) -> Lamp:
 def test_dry_run_shows_point_without_clicking(
     qtbot: QtBot, app_window: object, target: Target, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Garantia do modo de teste: o Vanthor NUNCA chama o Windows para mover o mouse ou clicar.
+    # Garantia do modo de teste: o Vanthor NUNCA chama o sistema para mover o mouse ou clicar.
     # (Conferir a posição do cursor falharia se a pessoa mexesse no mouse durante o teste.)
     input_calls: list[str] = []
-    monkeypatch.setattr(Win32Input, "set_cursor", lambda self, x, y: input_calls.append("mover"))
-    monkeypatch.setattr(Win32Input, "mouse", lambda self, b, down: input_calls.append("clicar"))
-    monkeypatch.setattr(Win32Input, "key", lambda self, vk, down: input_calls.append("tecla"))
+    backend = input_backend_class()
+    monkeypatch.setattr(backend, "set_cursor", lambda self, x, y: input_calls.append("mover"))
+    monkeypatch.setattr(backend, "mouse", lambda self, b, down: input_calls.append("clicar"))
+    monkeypatch.setattr(backend, "key", lambda self, vk, down: input_calls.append("tecla"))
     ctx = app_window._ctx  # type: ignore[attr-defined]
     profile = ctx.profiles.active().id
     lamp = green_lamp(qtbot, 320, QColor("#30343A"))

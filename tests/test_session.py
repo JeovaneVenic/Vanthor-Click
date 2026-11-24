@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ctypes
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -16,16 +15,16 @@ from vanthor.core.engine import EngineState  # noqa: E402
 from vanthor.persistence.database import Database  # noqa: E402
 from vanthor.persistence.repositories import AppSettings, SettingsRepository  # noqa: E402
 
-pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="atalho global é do Windows")
+from .native import REAL_DESKTOP, held_by_another_program, press_key  # noqa: E402
+
+pytestmark = pytest.mark.skipif(not REAL_DESKTOP, reason="atalho global real (Windows ou Linux/X11)")
 
 VK_ESCAPE = 0x1B
 VK_F11 = 0x7A
-KEYEVENTF_KEYUP = 0x0002
 
 
 def press(vk: int) -> None:
-    ctypes.windll.user32.keybd_event(vk, 0, 0, 0)
-    ctypes.windll.user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
+    press_key(vk)
 
 
 @pytest.fixture
@@ -80,22 +79,17 @@ def test_hotkey_is_released_after_stop(qtbot: QtBot, window: object) -> None:
     session.stop()
     qtbot.waitUntil(lambda: session.state is EngineState.STOPPED, timeout=2000)
     qtbot.wait(50)
-    user32 = ctypes.windll.user32
-    assert user32.RegisterHotKey(None, 0x7777, 0x4000, VK_ESCAPE)
-    user32.UnregisterHotKey(None, 0x7777)
+    with held_by_another_program(0, VK_ESCAPE):
+        pass
 
 
 def test_start_is_blocked_when_emergency_key_is_taken(qtbot: QtBot, window: object) -> None:
     session = window._ctx.session  # type: ignore[attr-defined]
-    user32 = ctypes.windll.user32
-    assert user32.RegisterHotKey(None, 0x7778, 0x4000, VK_ESCAPE), "Esc já ocupado por outro programa"
-    try:
+    with held_by_another_program(0, VK_ESCAPE):
         with qtbot.waitSignal(session.start_blocked, timeout=2000) as blocker:
             assert session.start() is False
         assert "Esc" in blocker.args[0]
         assert session.state is EngineState.STOPPED
-    finally:
-        user32.UnregisterHotKey(None, 0x7778)
 
 
 def test_settings_persist_across_restart(tmp_path: Path) -> None:

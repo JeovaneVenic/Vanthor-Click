@@ -44,7 +44,8 @@ class ZonesOverlay:
             window.setGeometry(screen.geometry())
             window.set_zones(zones, self._points)
             window.show()
-            exclude_from_capture(int(window.winId()))
+            # Sem exclusão de captura (Linux X11), a moldura vai para fora da zona: a detecção nunca a vê.
+            window.capture_safe = exclude_from_capture(int(window.winId()))
             self._windows.append(window)
 
     def update_zones(self, zones: list[Zone], points: list[ClickPoint] | None = None) -> None:
@@ -76,6 +77,7 @@ class _OverlayWindow(QWidget):
         self._monitor = monitor
         self._zones: list[Zone] = []
         self._points: list[ClickPoint] = []
+        self.capture_safe = True
 
     def set_zones(self, zones: list[Zone], points: list[ClickPoint]) -> None:
         self._zones = [z for z in zones if self._monitor.physical.contains_rect(z.rect)]
@@ -98,8 +100,12 @@ class _OverlayWindow(QWidget):
             fill = QColor(color)
             fill.setAlpha(26)
             p.setPen(QPen(color, 2, Qt.PenStyle.SolidLine if zone.enabled else Qt.PenStyle.DashLine))
-            p.setBrush(fill)
-            p.drawRect(r.adjusted(-1, -1, 1, 1))
+            if self.capture_safe:
+                p.setBrush(fill)
+                p.drawRect(r.adjusted(-1, -1, 1, 1))
+            else:
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawRect(r.adjusted(-3, -3, 3, 3))  # inteiramente por fora: nenhum pixel da zona muda
 
             label = zone.name if zone.enabled else f"{zone.name} (desligada)"
             lw, lh = metrics.horizontalAdvance(label) + 14, metrics.height() + 6

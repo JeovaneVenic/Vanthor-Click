@@ -69,6 +69,34 @@ def run_checks(build_window: Callable[[], Any]) -> dict[str, Any]:
         win = build_window()
         return f"janela {win.width()}x{win.height()}"
 
+    def linux_desktop() -> str:
+        from Xlib import display
+
+        from vanthor.winsys.x11 import compositor_running
+
+        d = display.Display()
+        try:
+            missing = [ext for ext in ("XTEST", "RANDR") if not d.has_extension(ext)]
+        finally:
+            d.close()
+        if missing:
+            raise RuntimeError(f"extensões do X11 ausentes: {', '.join(missing)}")
+        return "X11 com XTEST e RANDR; compositor " + ("ligado" if compositor_running() else "DESLIGADO")
+
+    def linux_emergency_key() -> str:
+        from vanthor.winsys.hotkeys import create_global_hotkey, parse_hotkey
+
+        hotkey = create_global_hotkey(on_trigger=lambda: None)
+        if not hotkey.register(0, parse_hotkey("Esc")):
+            raise RuntimeError("outro programa já usa a tecla Esc como atalho global")
+        hotkey.unregister()
+        return "Esc pode ser capturada como tecla de emergência"
+
+    import sys
+
+    if sys.platform.startswith("linux"):
+        check("linux_x11", linux_desktop)
+        check("tecla_emergencia", linux_emergency_key)
     check("recursos", resources)
     check("monitores", monitors)
     check("captura", capture)

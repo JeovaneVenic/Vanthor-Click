@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 from vanthor.core.engine import EngineState
 from vanthor.ui.theme.tokens import Color
 
@@ -32,3 +34,7 @@ def format_count(value: int) -> str:
 
 def plural(count: int, singular: str, plural_form: str) -> str:
     return f"{count} {singular if count == 1 else plural_form}"
+
+
+# Nome do sistema nos textos da interface: no Windows continua "Windows"; no Linux, "sistema".
+SYSTEM = "Windows" if sys.platform == "win32" else "sistema"

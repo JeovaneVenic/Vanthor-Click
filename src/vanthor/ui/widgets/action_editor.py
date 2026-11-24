@@ -35,6 +35,7 @@ from vanthor.actions.models import (
 from vanthor.capture.geometry import ScreenRect, monitor_for_point
 from vanthor.capture.zones import Zone
 from vanthor.ui.conceal import conceal_app_windows
+from vanthor.ui.copy import SYSTEM
 from vanthor.ui.overlays.eyedropper import Eyedropper, Marker
 from vanthor.ui.screens import monitor_maps
 from vanthor.ui.theme import icons
@@ -340,7 +341,7 @@ class ActionEditor(QWidget):
     def _warn_if_taken(self) -> None:
         taken = bool(self._keys) and taken_by_another_program(parse_combo(self._keys))
         self._keys_warning.setText(
-            f"{self._keys} é um atalho global de outro programa aberto. O Windows entrega essas teclas a ele, "
+            f"{self._keys} é um atalho global de outro programa aberto. O {SYSTEM} entrega essas teclas a ele, "
             "então elas podem não chegar ao destino. Prefira outra combinação."
             if taken
             else ""

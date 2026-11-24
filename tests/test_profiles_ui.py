@@ -18,7 +18,9 @@ from vanthor.persistence.database import Database  # noqa: E402
 from vanthor.rules.models import RuleStatus, TriggerSettings  # noqa: E402
 from vanthor.vision.color import ColorCondition  # noqa: E402
 
-pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="janela real do Windows")
+from .native import REAL_DESKTOP  # noqa: E402
+
+pytestmark = pytest.mark.skipif(not REAL_DESKTOP, reason="tela real (Windows ou Linux/X11)")
 
 
 @pytest.fixture

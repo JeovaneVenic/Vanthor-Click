@@ -22,6 +22,7 @@ from vanthor import __version__
 from vanthor.core.engine import EngineState
 from vanthor.persistence.repositories import MAX_CLICKS_PER_MINUTE_RANGE
 from vanthor.ui.context import AppContext
+from vanthor.ui.copy import SYSTEM
 from vanthor.ui.theme import icons
 from vanthor.ui.theme.tokens import Color, Size
 from vanthor.ui.widgets.toggle_switch import ToggleSwitch
@@ -203,10 +204,10 @@ class SettingsPage(QWidget):
 
         notifications = ToggleSwitch()
         notifications.setChecked(settings.notifications)
-        notifications.setAccessibleName("Notificações do Windows")
+        notifications.setAccessibleName(f"Notificações do {SYSTEM}")
         notifications.toggled.connect(lambda on: self._update(notifications=bool(on)))
         section.add_row(
-            "Notificações do Windows",
+            f"Notificações do {SYSTEM}",
             "Avisa na bandeja quando houver parada de emergência ou erro e o Vanthor não estiver em primeiro plano.",
             notifications,
         )
@@ -226,14 +227,14 @@ class SettingsPage(QWidget):
     def _system_section(self) -> QWidget:
         section = _Section("Sistema")
         self._autostart = ToggleSwitch()
-        self._autostart.setAccessibleName("Iniciar com o Windows")
+        self._autostart.setAccessibleName(f"Iniciar com o {SYSTEM}")
         self._autostart.setChecked(autostart.is_enabled())
         self._autostart.toggled.connect(self._set_autostart)
         self._autostart_error = _label("", "FieldError", wrap=True)
         self._autostart_error.hide()
         section.add_row(
-            "Iniciar com o Windows",
-            "Abre em segundo plano, no ícone da bandeja, quando você entra no Windows. "
+            f"Iniciar com o {SYSTEM}",
+            f"Abre em segundo plano, no ícone da bandeja, quando você entra no {SYSTEM}. "
             "As automações continuam paradas até você iniciar.",
             self._autostart,
             self._autostart_error,
@@ -259,7 +260,7 @@ class SettingsPage(QWidget):
         except OSError as exc:
             log.exception("Falha ao alterar a inicialização automática")
             self._autostart.setChecked(not enabled)
-            self._autostart_error.setText(f"O Windows não permitiu a alteração: {exc}")
+            self._autostart_error.setText(f"O {SYSTEM} não permitiu a alteração: {exc}")
             self._autostart_error.show()
             return
         self._autostart_error.hide()

@@ -33,8 +33,13 @@ class Color:
 
 
 class Font:
-    UI_CANDIDATES: Final = ("Segoe UI Variable Text", "Segoe UI")
-    DISPLAY_CANDIDATES: Final = ("Bahnschrift", "Segoe UI Variable Display", "Segoe UI")
+    # Windows primeiro (inalterado). Depois, as equivalentes do Linux Mint: a Segoe e a Bahnschrift
+    # são fontes da Microsoft e não existem nem podem ser redistribuídas no Linux.
+    UI_CANDIDATES: Final = ("Segoe UI Variable Text", "Segoe UI", "Ubuntu", "Noto Sans", "DejaVu Sans")
+    DISPLAY_CANDIDATES: Final = (
+        "Bahnschrift", "Segoe UI Variable Display", "Segoe UI",
+        "Ubuntu Condensed", "Noto Sans Display", "Noto Sans", "DejaVu Sans Condensed",
+    )
 
 
 class Size:

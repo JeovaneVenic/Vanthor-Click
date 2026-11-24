@@ -22,7 +22,9 @@ from vanthor.vision.color import ColorCondition  # noqa: E402
 
 from .test_capture_dpi import physical_rect_of  # noqa: E402
 
-pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="tela real do Windows")
+from .native import REAL_DESKTOP  # noqa: E402
+
+pytestmark = pytest.mark.skipif(not REAL_DESKTOP, reason="tela real (Windows ou Linux/X11)")
 
 GREEN, RED, GRAY = QColor("#22C55E"), QColor("#EF4444"), QColor("#30343A")
 

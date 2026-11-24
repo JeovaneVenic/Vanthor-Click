@@ -50,6 +50,10 @@ Tudo o que o aplicativo precisa (Python, Qt, NumPy e o runtime do Visual C++) j�
 |---|---|---|
 | ![](docs/telas/instalador-1-boas-vindas.png) | ![](docs/telas/instalador-2-copiando.png) | ![](docs/telas/instalador-3-verificando.png) |
 
+### Linux Mint XFCE
+Requer o Mint 22 ou mais novo, em sessão X11. Na pasta do projeto, rode `bash linux/install.sh`. O
+instalador cria o atalho no menu e na Área de Trabalho. Detalhes e limitações em [docs/LINUX.md](docs/LINUX.md).
+
 ## Usar em 4 passos
 1. **Zonas → Nova zona:** arraste sobre a área que muda de cor (um botão, uma luz, um campo).
 2. **Automações → Nova automação:** escolha a zona, a cor, quando agir e o que fazer.
@@ -111,6 +115,7 @@ docs/            arquitetura, publicação e telas
 ### Documentação
 - [Arquitetura, decisões e limitações](docs/ARQUITETURA.md)
 - [Como publicar em sites de download](docs/PUBLICACAO.md)
+- [Linux Mint XFCE: instalação, adaptações e limitações](docs/LINUX.md)
 - [Regras do projeto para quem contribui](CLAUDE.md)
 
 ### Qualidade

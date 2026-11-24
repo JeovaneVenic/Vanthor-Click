@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ctypes
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -17,7 +16,9 @@ from vanthor.core.engine import EngineState  # noqa: E402
 from vanthor.persistence.database import Database  # noqa: E402
 from vanthor.persistence.repositories import AppSettings  # noqa: E402
 
-pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="bandeja e atalho global do Windows")
+from .native import REAL_DESKTOP, press_key  # noqa: E402
+
+pytestmark = pytest.mark.skipif(not REAL_DESKTOP, reason="bandeja e atalho global reais (Windows ou Linux/X11)")
 
 
 @pytest.fixture
@@ -61,9 +62,7 @@ def test_emergency_key_works_with_window_hidden(qtbot: QtBot, window: object) ->
     window.hide()  # type: ignore[attr-defined]
     qtbot.wait(100)
     assert ctx.session.start()
-    user32 = ctypes.windll.user32
-    user32.keybd_event(0x1B, 0, 0, 0)
-    user32.keybd_event(0x1B, 0, 2, 0)
+    press_key(0x1B)
     qtbot.waitUntil(lambda: ctx.session.state is EngineState.STOPPED, timeout=3000)
 
 

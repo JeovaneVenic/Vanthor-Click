@@ -37,6 +37,8 @@ class PhysicalMonitor:
 
 
 def enumerate_monitors() -> list[PhysicalMonitor]:
+    if sys.platform.startswith("linux"):
+        return _enumerate_x11()
     if sys.platform != "win32":
         return []
     user32 = ctypes.windll.user32
@@ -68,6 +70,15 @@ def enumerate_monitors() -> list[PhysicalMonitor]:
     if not user32.EnumDisplayMonitors(None, None, monitor_enum_proc(callback), 0):
         raise OSError("O Windows não listou os monitores")
     # Ordem estável: principal primeiro, depois da esquerda para a direita.
+    found.sort(key=lambda m: (not m.primary, m.rect.x, m.rect.y))
+    return found
+
+
+def _enumerate_x11() -> list[PhysicalMonitor]:
+    """Linux (X11): as coordenadas do X já são pixels reais; a escala lógica vem do Qt (ui/screens)."""
+    from vanthor.winsys.x11 import enumerate_monitors_x11
+
+    found = [PhysicalMonitor(name, rect, primary, 1.0) for name, rect, primary in enumerate_monitors_x11()]
     found.sort(key=lambda m: (not m.primary, m.rect.x, m.rect.y))
     return found
 

@@ -10,6 +10,8 @@ regras vigiam a tela ao mesmo tempo, e as ações saem em fila (há um único cu
 ## Stack
 Python 3.12 (`.venv`), PySide6, NumPy, MSS, SendInput via ctypes, SQLite, PyInstaller + Inno Setup.
 Detalhes e justificativas: `docs/ARQUITETURA.md`.
+Linux Mint XFCE (X11): mesma UI. `winsys/x11.py` atende entrada, tecla de emergência e monitores; os
+caminhos do Windows não mudam. Scripts em `linux/`, detalhes em `docs/LINUX.md`.
 
 ## Comandos
 - Rodar: `.venv\Scripts\python -m vanthor` (a partir de `src`) ou `.\scripts\run.ps1`

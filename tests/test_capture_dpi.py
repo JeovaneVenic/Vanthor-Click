@@ -21,7 +21,9 @@ from vanthor.capture.capturer import RegionCapturer  # noqa: E402
 from vanthor.capture.geometry import ScreenRect  # noqa: E402
 from vanthor.ui.screens import map_for_screen, monitor_maps  # noqa: E402
 
-pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="captura real do Windows")
+from .native import REAL_DESKTOP  # noqa: E402
+
+pytestmark = pytest.mark.skipif(not REAL_DESKTOP, reason="tela real (Windows ou Linux/X11)")
 
 PATTERN = QColor("#12ABCD")
 
@@ -119,6 +121,7 @@ def test_zone_drawn_on_overlay_captures_the_same_pixels(qtbot: QtBot, pattern: P
         capturer.close()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="o X11 não exclui janelas da captura (docs/LINUX.md)")
 def test_overlay_is_invisible_to_capture(qtbot: QtBot, pattern: PatternWindow) -> None:
     """A sobreposição escurecida cobre a tela, mas a captura continua vendo a tela real."""
     from vanthor.ui.overlays.zone_selector import ZoneSelector

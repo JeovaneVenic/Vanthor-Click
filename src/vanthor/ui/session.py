@@ -20,7 +20,7 @@ from vanthor.core.events import Event, EventBus, EventKind
 from vanthor.persistence.repositories import ProfileError, ProfileRepository, SettingsRepository
 from vanthor.rules.engine import RuleEngine
 from vanthor.rules.models import Rule
-from vanthor.winsys.hotkeys import GlobalHotkey, HotkeyError, parse_hotkey
+from vanthor.winsys.hotkeys import HotkeyError, create_global_hotkey, parse_hotkey
 
 log = logging.getLogger(__name__)
 
@@ -65,6 +65,7 @@ class AutomationSession(QObject):
     profile_changed = Signal(object)  # Profile
     simulated_click = Signal(int, int, str)  # x, y físicos e rótulo (modo de teste)
     _event_from_engine = Signal(object)
+    _emergency_from_x11 = Signal()
     _simulated_from_worker = Signal(int, int, str)
 
     def __init__(
@@ -90,7 +91,9 @@ class AutomationSession(QObject):
         # Itens em exclusão (ainda no banco durante o "Desfazer"), que já param de ser vigiados.
         self._hidden_zones: set[int] = set()
         self._hidden_rules: set[int] = set()
-        self._hotkey = GlobalHotkey()
+        # No Linux (X11) a tecla de emergência chega por uma thread própria: o sinal entrega na thread da sessão.
+        self._emergency_from_x11.connect(self.emergency_stop)
+        self._hotkey = create_global_hotkey(on_trigger=self._emergency_from_x11.emit)
         self._hwnd: int | None = None
         # Eventos chegam na thread do motor; o sinal interno os entrega na thread desta sessão.
         self._event_from_engine.connect(self._on_event)

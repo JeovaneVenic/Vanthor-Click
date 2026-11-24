@@ -22,14 +22,14 @@ from vanthor.persistence.database import Database  # noqa: E402
 from vanthor.rules.models import RuleStatus, TriggerSettings  # noqa: E402
 from vanthor.ui.screens import map_for_screen, monitor_maps  # noqa: E402
 from vanthor.vision.color import ColorCondition  # noqa: E402
-from vanthor.winsys.input import Win32Input  # noqa: E402
 from vanthor.winsys.hotkeys import taken_by_another_program  # noqa: E402
 from vanthor.winsys.keys import parse_combo  # noqa: E402
 
+from .native import REAL_DESKTOP, MOD_ALT, MOD_CONTROL, held_by_another_program, press_key, real_input  # noqa: E402
 from .test_capture_dpi import physical_rect_of  # noqa: E402
 from .test_rules_e2e import Lamp, rgb  # noqa: E402
 
-pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="entrada real do Windows")
+pytestmark = pytest.mark.skipif(not REAL_DESKTOP, reason="entrada real (Windows ou Linux/X11)")
 
 
 class Target(QWidget):
@@ -77,7 +77,7 @@ def target(qtbot: QtBot) -> Target:
 
 @pytest.fixture
 def controller() -> Iterator[InputController]:
-    ctl = InputController(Win32Input())
+    ctl = InputController(real_input())
     original = ctl.cursor()
     yield ctl
     ctl.release_all()
@@ -137,11 +137,11 @@ def app_window(qtbot: QtBot, tmp_path: Path) -> Iterator[object]:
     qtbot.addWidget(window)
     window.showMinimized()
     qtbot.wait(100)
-    original = InputController(Win32Input()).cursor()
+    original = InputController(real_input()).cursor()
     yield window
     ctx.session.shutdown()
     db.close()
-    InputController(Win32Input()).move(*original)
+    InputController(real_input()).move(*original)
 
 
 def test_color_appears_and_rule_clicks_target(qtbot: QtBot, app_window: object, target: Target) -> None:
@@ -161,7 +161,7 @@ def test_color_appears_and_rule_clicks_target(qtbot: QtBot, app_window: object, 
     action = ActionSpec(ActionKind.CLICK, (ClickStep(*point),))
     rule = ctx.rules.create(profile, "Clicar no alvo", zone.id, ColorCondition(rgb(QColor("#22C55E"))),
                             TriggerSettings(confirm_frames=2), action)
-    before = InputController(Win32Input()).cursor()
+    before = InputController(real_input()).cursor()
     assert ctx.session.start()
     qtbot.wait(300)
     assert target.clicks == []
@@ -171,14 +171,12 @@ def test_color_appears_and_rule_clicks_target(qtbot: QtBot, app_window: object, 
     _, cx, cy = target.clicks[0]
     assert abs(cx - point[0]) <= 1 and abs(cy - point[1]) <= 1
     qtbot.waitUntil(lambda: ctx.rules.totals(profile).clicks == 1, timeout=2000)
-    assert InputController(Win32Input()).cursor() == before  # o mouse voltou para onde estava
+    assert InputController(real_input()).cursor() == before  # o mouse voltou para onde estava
     ctx.session.stop()
     assert ctx.rules.get(rule.id).status is RuleStatus.ACTIVE
 
 
 def test_emergency_key_interrupts_sequence_midway(qtbot: QtBot, app_window: object, target: Target) -> None:
-    import ctypes
-
     ctx = app_window._ctx  # type: ignore[attr-defined]
     profile = ctx.profiles.active().id
     lamp = Lamp(QColor("#22C55E"))
@@ -201,9 +199,7 @@ def test_emergency_key_interrupts_sequence_midway(qtbot: QtBot, app_window: obje
     assert ctx.session.start()
     qtbot.waitUntil(lambda: len(target.clicks) == 1, timeout=3000)
 
-    user32 = ctypes.windll.user32
-    user32.keybd_event(0x1B, 0, 0, 0)  # Esc de verdade: tecla de emergência
-    user32.keybd_event(0x1B, 0, 2, 0)
+    press_key(0x1B)  # Esc de verdade: tecla de emergência
     qtbot.waitUntil(lambda: any("interrompida" in n for n in notices), timeout=2000)
     qtbot.wait(300)
     assert len(target.clicks) == 1  # o segundo clique da sequência nunca aconteceu
@@ -234,13 +230,7 @@ def test_key_action_in_rule(qtbot: QtBot, app_window: object, target: Target) ->
 
 
 def test_detects_combo_taken_by_another_program() -> None:
-    import ctypes
-
-    user32 = ctypes.windll.user32
     combo = parse_combo("Ctrl+Alt+F9")
-    assert user32.RegisterHotKey(None, 0x7A7A, 0x2 | 0x1 | 0x4000, 0x78), "Ctrl+Alt+F9 já ocupado nesta máquina"
-    try:
+    with held_by_another_program(MOD_CONTROL | MOD_ALT, 0x78):
         assert taken_by_another_program(combo)
-    finally:
-        user32.UnregisterHotKey(None, 0x7A7A)
     assert not taken_by_another_program(combo)

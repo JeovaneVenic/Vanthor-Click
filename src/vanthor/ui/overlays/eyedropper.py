@@ -8,18 +8,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
+
 from PySide6.QtCore import QObject, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QImage, QKeyEvent, QMouseEvent, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import QWidget
 
-from vanthor.capture.capturer import CaptureError, RegionCapturer
+from vanthor.capture.capturer import CaptureError, Image, RegionCapturer
 from vanthor.capture.geometry import MonitorMap, ScreenRect
 from vanthor.ui.overlays.host import modal_host
 from vanthor.ui.screens import monitor_maps, screen_for_map
 from vanthor.ui.theme.fonts import display_font, ui_font
 from vanthor.ui.theme.tokens import Color
 from vanthor.vision.color import RGB, rgb_to_hex
-from vanthor.winsys.desktop import exclude_from_capture
+from vanthor.winsys.desktop import capture_exclusion_supported, exclude_from_capture
 
 _RADIUS = 7  # pixels físicos de cada lado do central (lupa de 15×15)
 _ZOOM = 10
@@ -50,9 +52,18 @@ class Eyedropper(QObject):
         self.title, self.hint, self.markers = title, hint, markers
         self._overlays: list[_EyedropperOverlay] = []
         self._capturer = RegionCapturer()
+        self._frozen: list[tuple[ScreenRect, Image]] = []
         self._done = False
 
     def start(self) -> None:
+        if not capture_exclusion_supported():
+            # Linux X11: a sobreposição apareceria na captura (inclusive a própria lupa). Fotografamos
+            # cada monitor ANTES de abrir e a lupa e a cor escolhida usam essa foto.
+            for monitor in monitor_maps():
+                try:
+                    self._frozen.append((monitor.physical, self._capturer.grab(monitor.physical)))
+                except CaptureError:
+                    continue
         for monitor in monitor_maps():
             screen = screen_for_map(monitor)
             if screen is None:
@@ -72,7 +83,7 @@ class Eyedropper(QObject):
         left = min(max(bounds.x, x - _RADIUS), bounds.right - (2 * _RADIUS + 1))
         top = min(max(bounds.y, y - _RADIUS), bounds.bottom - (2 * _RADIUS + 1))
         try:
-            image = self._capturer.grab(ScreenRect(left, top, 2 * _RADIUS + 1, 2 * _RADIUS + 1))
+            image = self._grab(ScreenRect(left, top, 2 * _RADIUS + 1, 2 * _RADIUS + 1))
         except CaptureError:
             return None
         qimage = QImage(image.data, image.shape[1], image.shape[0], image.shape[1] * 3, QImage.Format.Format_RGB888)
@@ -84,13 +95,21 @@ class Eyedropper(QObject):
         if self._done:
             return
         try:
-            pixel = self._capturer.grab(ScreenRect(x, y, 1, 1))
+            pixel = self._grab(ScreenRect(x, y, 1, 1))
         except CaptureError:
             return
         rgb: RGB = (int(pixel[0, 0, 0]), int(pixel[0, 0, 1]), int(pixel[0, 0, 2]))
         self._done = True
         self.picked.emit(rgb, x, y)  # antes de fechar: quem ouve reexibe a janela principal
         self._close()
+
+    def _grab(self, rect: ScreenRect) -> Image:
+        """Captura ao vivo, ou recorte da foto tirada ao abrir (sistemas sem exclusão de captura)."""
+        for bounds, image in self._frozen:
+            if bounds.contains_rect(rect):
+                top, left = rect.y - bounds.y, rect.x - bounds.x
+                return np.ascontiguousarray(image[top : top + rect.height, left : left + rect.width])
+        return self._capturer.grab(rect)
 
     def cancel(self) -> None:
         if self._done:

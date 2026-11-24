@@ -104,3 +104,15 @@ class Win32Input:
                 "O Windows bloqueou o clique ou a tecla. Se o programa de destino roda como "
                 "administrador, abra o Vanthor como administrador também."
             )
+
+
+def create_input_backend() -> Win32Input:
+    """Mouse e teclado do sistema atual: Windows (SendInput) ou Linux X11 (XTest), mesma interface."""
+    if sys.platform.startswith("linux"):
+        from vanthor.winsys.x11 import X11Error, X11Input
+
+        try:
+            return X11Input()  # type: ignore[return-value]
+        except X11Error as exc:
+            raise InputError(str(exc)) from exc
+    return Win32Input()

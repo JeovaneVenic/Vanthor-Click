@@ -7,7 +7,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QLockFile
+from PySide6.QtCore import QLockFile, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -33,7 +33,7 @@ from vanthor.ui.session import AutomationSession, WatchPlan, build_watch_plan
 from vanthor.ui.theme.stylesheet import apply_theme
 from vanthor.ui.translation import install_qt_translation
 from vanthor.winsys.desktop import create_app_mutex, set_app_user_model_id
-from vanthor.winsys.input import Win32Input
+from vanthor.winsys.input import create_input_backend
 from vanthor.winsys.monitors import enumerate_monitors
 from vanthor.winsys.paths import data_dir, database_path, resource_path
 
@@ -55,7 +55,7 @@ def build_context(db: Database) -> AppContext:
     zone_monitor = ZoneMonitor(bus, screens=lambda: [m.rect for m in enumerate_monitors()])
     dispatcher = ActionDispatcher(
         bus,
-        controller_factory=lambda: InputController(Win32Input()),
+        controller_factory=lambda: InputController(create_input_backend()),
         recorder=rules.record,
         screens=lambda: [m.rect for m in enumerate_monitors()],
     )
@@ -105,6 +105,9 @@ def main() -> int:
     app.setApplicationVersion(__version__)
     app.setOrganizationName("Vanthor")
     app.setWindowIcon(QIcon(str(resource_path("brand", "app.ico"))))
+    if sys.platform.startswith("linux"):
+        # Liga as janelas ao atalho instalado (vanthor-bot-click.desktop): ícone certo no painel do XFCE.
+        app.setDesktopFileName("vanthor-bot-click")
     translated = install_qt_translation(app)
 
     if self_test:
@@ -129,6 +132,7 @@ def main() -> int:
 
     ctx = build_context(db)
     apply_theme(app)
+    _warn_if_linux_compositor_off()
     window = MainWindow(ctx)
     # Quem encerra o app é o "Sair" (ou fechar a janela com o segundo plano desligado),
     # não o Qt ao perceber que nenhuma janela está visível.
@@ -151,7 +155,49 @@ def main() -> int:
         log.info("Aplicativo encerrado")
 
     app.aboutToQuit.connect(on_quit)
+    wake_timer = _handle_linux_termination(window)  # noqa: F841 (mantido vivo até o fim)
     return app.exec()
+
+
+def _handle_linux_termination(window: MainWindow) -> QTimer | None:
+    """Linux: logout/desligamento enviam SIGTERM. Equivale ao WM_ENDSESSION do Windows: encerra de
+    verdade, parando as automações e soltando botões e teclas, em vez de morrer no meio."""
+    if not sys.platform.startswith("linux"):
+        return None
+    import signal
+
+    signal.signal(signal.SIGTERM, lambda *_: window.quit_app())
+    signal.signal(signal.SIGHUP, lambda *_: window.quit_app())
+    # O Python só executa o tratador quando roda código Python; o laço do Qt é C++. Um timer leve
+    # acorda o interpretador a cada meio segundo para o sinal ser atendido.
+    timer = QTimer()
+    timer.timeout.connect(lambda: None)
+    timer.start(500)
+    return timer
+
+
+def _warn_if_linux_compositor_off() -> None:
+    """Linux: sem o compositor do xfwm4, sobreposições transparentes (seleção de zona, conta-gotas,
+    pílula "Vigiando") aparecem como blocos opacos. Avisa e diz como ligar, sem impedir o uso."""
+    if not sys.platform.startswith("linux"):
+        return
+    from vanthor.winsys.x11 import compositor_running
+
+    if compositor_running():
+        return
+    log.warning("Compositor do gerenciador de janelas desligado")
+    QMessageBox.warning(
+        None,
+        APP_NAME,
+        "\n\n".join(
+            [
+                "O compositor do XFCE está desligado.",
+                "Sem ele, a seleção de zonas e o conta-gotas não ficam transparentes.",
+                "Para ligar: menu → Configurações → Ajustes do gerenciador de janelas → aba Compositor → "
+                'marque "Habilitar composição de exibição". Depois, abra o Vanthor de novo.',
+            ]
+        ),
+    )
 
 
 def _run_self_test(app: QApplication, translated: bool) -> int:

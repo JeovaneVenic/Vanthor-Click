@@ -11,6 +11,8 @@ dependencies = [
     "PySide6>=6.8",
     "numpy>=2.0",
     "mss>=9.0",
+    # Linux (X11): mouse/teclado (XTest), tecla de emergência (XGrabKey) e monitores (XRandR).
+    "python-xlib>=0.33; sys_platform == 'linux'",
 ]
 
 [project.optional-dependencies]

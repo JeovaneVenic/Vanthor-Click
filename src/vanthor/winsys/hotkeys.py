@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ctypes
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from vanthor.winsys.keys import KeyCombo, KeyError_, parse_key
@@ -77,7 +78,13 @@ def taken_by_another_program(combo: KeyCombo) -> bool:
     Se sim, o Windows entrega a tecla a ele, e uma ação "pressionar teclas" nunca chega ao destino.
     Testamos tentando registrar e liberando em seguida.
     """
-    if sys.platform != "win32" or combo.is_bare:
+    if combo.is_bare:
+        return False
+    if sys.platform.startswith("linux"):
+        from vanthor.winsys.x11 import combo_taken
+
+        return combo_taken(combo.modifiers, combo.vk)
+    if sys.platform != "win32":
         return False
     modifiers = 0
     for vk in combo.modifiers:
@@ -118,3 +125,16 @@ class GlobalHotkey:
         if self._hwnd is not None and sys.platform == "win32":
             ctypes.windll.user32.UnregisterHotKey(self._hwnd, self._id)
         self._hwnd = None
+
+
+def create_global_hotkey(on_trigger: Callable[[], None]) -> GlobalHotkey:
+    """Tecla de emergência do sistema atual.
+
+    Windows: ``RegisterHotKey`` (o aviso chega pela janela, em ``nativeEvent``; ``on_trigger`` não é usado).
+    Linux X11: ``XGrabKey`` com uma thread própria que chama ``on_trigger`` ao pressionar.
+    """
+    if sys.platform.startswith("linux"):
+        from vanthor.winsys.x11 import X11GlobalHotkey
+
+        return X11GlobalHotkey(on_trigger)  # type: ignore[return-value]
+    return GlobalHotkey()

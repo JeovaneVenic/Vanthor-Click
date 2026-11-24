@@ -18,7 +18,9 @@ from vanthor.vision.color import ColorCondition, ColorSpace, MatchMode  # noqa: 
 
 from .test_capture_dpi import PATTERN, pattern, physical_rect_of  # noqa: E402, F401
 
-pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="captura real do Windows")
+from .native import REAL_DESKTOP  # noqa: E402
+
+pytestmark = pytest.mark.skipif(not REAL_DESKTOP, reason="tela real (Windows ou Linux/X11)")
 PATTERN_RGB = (PATTERN.red(), PATTERN.green(), PATTERN.blue())
 
 

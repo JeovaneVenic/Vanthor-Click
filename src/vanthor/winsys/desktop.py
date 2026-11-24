@@ -47,6 +47,15 @@ def animations_enabled() -> bool:
 _WDA_EXCLUDEFROMCAPTURE = 0x11
 
 
+def capture_exclusion_supported() -> bool:
+    """O sistema consegue esconder janelas das capturas de tela?
+
+    Windows 10 2004+: sim. Linux X11: não existe equivalente; as sobreposições se adaptam
+    (desenho por fora das zonas, conta-gotas sobre uma foto da tela tirada antes de abrir).
+    """
+    return sys.platform == "win32"
+
+
 def exclude_from_capture(hwnd: int) -> bool:
     """Deixa a janela invisível para capturas de tela (inclusive as nossas).
 

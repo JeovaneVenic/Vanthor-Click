@@ -1,6 +1,7 @@
 PySide6>=6.8
 numpy>=2.0
 mss>=9.0
+python-xlib>=0.33; sys_platform == "linux"
 # desenvolvimento
 pytest>=8
 pytest-qt>=4.4

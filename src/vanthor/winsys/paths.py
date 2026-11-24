@@ -19,9 +19,12 @@ def data_dir() -> Path:
     override = os.environ.get("VANTHOR_DATA_DIR")
     if override:
         base = Path(override)
+    elif os.environ.get("APPDATA"):  # Windows
+        base = Path(os.environ["APPDATA"]) / APP_ID
     else:
-        appdata = os.environ.get("APPDATA")
-        base = Path(appdata) / APP_ID if appdata else Path.home() / f".{APP_ID.lower()}"
+        # Linux: padrão XDG (~/.local/share/VanthorBotClick), o mesmo lugar dos outros apps do Mint.
+        xdg = os.environ.get("XDG_DATA_HOME")
+        base = (Path(xdg) if xdg else Path.home() / ".local" / "share") / APP_ID
     base.mkdir(parents=True, exist_ok=True)
     return base
 
