@@ -116,6 +116,7 @@ docs/            arquitetura, publicação e telas
 - [Arquitetura, decisões e limitações](docs/ARQUITETURA.md)
 - [Como publicar em sites de download](docs/PUBLICACAO.md)
 - [Linux Mint XFCE: instalação, adaptações e limitações](docs/LINUX.md)
+- [Diagnóstico: por que não clicou (ou clicou sem a cor)](docs/DIAGNOSTICO.md)
 - [Regras do projeto para quem contribui](CLAUDE.md)
 
 ### Qualidade

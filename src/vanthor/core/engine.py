@@ -24,6 +24,9 @@ Clock = Callable[[], float]
 TickHandler = Callable[[float], None]
 SafetyHook = Callable[[], None]
 
+_SLOW_TICK_S = 0.5
+_SLOW_LOG_INTERVAL_S = 60.0
+
 
 class EngineState(StrEnum):
     STOPPED = "stopped"
@@ -125,6 +128,7 @@ class AutomationEngine:
                 target=self._run, args=(self._stop_signal,), name="vanthor-engine", daemon=True
             )
             self._thread.start()
+        log.info("Motor iniciado (ciclo de %.0f ms)", self._interval * 1000)
         self._bus.publish(Event(EventKind.ENGINE_STARTED, "Automações iniciadas"))
         return True
 
@@ -134,6 +138,7 @@ class AutomationEngine:
                 return False
             self._bank_running_time()
             self._state = EngineState.PAUSED
+        log.info("Motor pausado")
         self._bus.publish(Event(EventKind.ENGINE_PAUSED, "Automações pausadas"))
         return True
 
@@ -143,6 +148,7 @@ class AutomationEngine:
                 return False
             self._running_since = self._clock()
             self._state = EngineState.RUNNING
+        log.info("Motor retomado")
         self._bus.publish(Event(EventKind.ENGINE_RESUMED, "Automações retomadas"))
         return True
 
@@ -173,6 +179,7 @@ class AutomationEngine:
         else:
             log.error("Limpeza adiada: a thread do motor ainda está ativa")
 
+        log.info("Motor parado (motivo: %s, %s ciclos)", reason.value, self._ticks)
         kind = EventKind.EMERGENCY_STOP if reason is StopReason.EMERGENCY else EventKind.ENGINE_STOPPED
         level = EventLevel.INFO if reason in (StopReason.USER, StopReason.SHUTDOWN) else EventLevel.WARNING
         self._bus.publish(Event(kind, _STOP_MESSAGES[reason], level))
@@ -208,6 +215,7 @@ class AutomationEngine:
         # time.sleep usa o temporizador de alta resolução do Windows (Python 3.11+); Event.wait
         # arredonda para ~15,6 ms e transformaria 25 ms em 31 ms. A parada é conferida a cada ciclo.
         next_tick = time.monotonic() + self._interval
+        last_slow_log = -_SLOW_LOG_INTERVAL_S
         while True:
             remaining = next_tick - time.monotonic()
             if remaining > 0:
@@ -224,6 +232,7 @@ class AutomationEngine:
                 self._ticks += 1
                 handlers = list(self._tick_handlers)
             now = self._clock()
+            started = time.monotonic()
             for handler in handlers:
                 if stop_signal.is_set():
                     return
@@ -236,6 +245,12 @@ class AutomationEngine:
                     )
                     self.stop(StopReason.ERROR)
                     return
+            took = time.monotonic() - started
+            if took >= _SLOW_TICK_S and started - last_slow_log >= _SLOW_LOG_INTERVAL_S:
+                # Ciclo lento atrasa TODAS as zonas (ex.: zona enorme no modo HSV, PC sobrecarregado).
+                last_slow_log = started
+                log.warning("Ciclo de automação lento: %.0f ms (o esperado é até %.0f ms)", took * 1000,
+                            self._interval * 1000)
 
     @staticmethod
     def _run_safety_hooks(hooks: list[SafetyHook]) -> None:

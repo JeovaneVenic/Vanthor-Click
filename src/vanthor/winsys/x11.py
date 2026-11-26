@@ -87,7 +87,13 @@ def enumerate_monitors_x11() -> list[tuple[str, ScreenRect, bool]]:
                 continue
             name = info.name.decode() if isinstance(info.name, bytes) else str(info.name)
             found.append((name, ScreenRect(crtc.x, crtc.y, crtc.width, crtc.height), output == primary))
-        if found and not any(p for _, _, p in found):
+        if not found:
+            # Servidor sem monitor físico (acesso remoto, driver "dummy", VNC): o XRandR não lista
+            # nenhuma saída ativa, mas a tela existe. Sem este recurso, nenhuma zona seria capturada
+            # ("fora das telas") e nenhum clique sairia.
+            geo = root.get_geometry()
+            return [("", ScreenRect(0, 0, geo.width, geo.height), True)]
+        if not any(p for _, _, p in found):
             name, rect, _ = found[0]  # sem principal definida: a primeira saída faz esse papel
             found[0] = (name, rect, True)
         return found

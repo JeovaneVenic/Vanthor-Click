@@ -24,6 +24,7 @@ CapturerFactory = Callable[[], RegionCapturer]
 ScreensProvider = Callable[[], list[ScreenRect]]
 
 _SCREENS_REFRESH_S = 5.0  # monitores mudam raramente; reler a cada ciclo seria desperdício
+_SCREENS_RETRY_S = 0.5  # depois de uma falha de captura, relê os monitores mais cedo
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,10 +61,18 @@ class ZoneMonitor:
         self._capturer: RegionCapturer | None = None
         self._capturer_thread: int | None = None
         self._screens: list[ScreenRect] = []
-        self._screens_read_at = -_SCREENS_REFRESH_S
+        self._screens_read_at: float | None = None
+        self._screens_failing = False
+        self._logged_plan: tuple[object, ...] = ()
 
     # -- configuração (qualquer thread) ----------------------------------------------
     def set_zones(self, zones: list[Zone]) -> None:
+        summary = tuple((z.id, z.name, z.rect, z.interval_ms) for z in zones if z.enabled)
+        if summary != self._logged_plan:
+            self._logged_plan = summary
+            for zone_id, name, rect, interval in summary:
+                log.info("Vigiando %s (id %s): x=%s y=%s %sx%s px a cada %s ms",
+                         name, zone_id, rect.x, rect.y, rect.width, rect.height, interval)
         with self._lock:
             self._names = {z.id: z.name for z in zones}
             active = set(self._names)
@@ -104,6 +113,8 @@ class ZoneMonitor:
         self._capturer = None
         self._capturer_thread = None
         self._scheduler.reset()
+        self._screens_read_at = None  # a próxima execução relê os monitores na hora
+        self._logged_plan = ()
         with self._lock:
             self._frames.clear()
             self._captures.clear()
@@ -124,9 +135,13 @@ class ZoneMonitor:
             try:
                 image = capturer.grab(batch.rect)
             except CaptureError as exc:
-                log.warning("Falha ao capturar %s: %s", batch.rect, exc)
                 for group in batch.groups:
                     self._mark_error(group.zone_ids, f"Falha na captura: {exc}")
+                # Monitor trocado/desligado é a causa mais comum: relê as telas em meio segundo
+                # em vez de esperar o intervalo normal de releitura.
+                retry_mark = now - _SCREENS_REFRESH_S + _SCREENS_RETRY_S
+                if self._screens_read_at is not None and self._screens_read_at > retry_mark:
+                    self._screens_read_at = retry_mark
                 continue
             elapsed_ms = (time.perf_counter() - started) * 1000
             for group in batch.groups:
@@ -142,6 +157,7 @@ class ZoneMonitor:
                 self._last_ms[zone_id] = elapsed_ms
                 recovered = self._errors.pop(zone_id, None)
                 if recovered is not None:
+                    log.info("%s (id %s): captura normalizada", self._names.get(zone_id, "Zona"), zone_id)
                     self._bus.publish(
                         Event(EventKind.NOTICE, f"{self._names.get(zone_id, 'Zona')}: captura normalizada")
                     )
@@ -157,9 +173,27 @@ class ZoneMonitor:
         return self._capturer
 
     def _current_screens(self, now: float) -> list[ScreenRect]:
-        if now - self._screens_read_at >= _SCREENS_REFRESH_S:
-            self._screens = self._screens_provider()
+        if self._screens_read_at is None or now - self._screens_read_at >= _SCREENS_REFRESH_S:
             self._screens_read_at = now
+            try:
+                screens = self._screens_provider()
+            except Exception as exc:
+                # Listar monitores pode falhar por um instante (tela bloqueada, troca de resolução,
+                # driver reiniciando). Antes, isso derrubava o motor inteiro; agora seguimos com a
+                # última lista conhecida e tentamos de novo no próximo intervalo.
+                if not self._screens_failing:
+                    log.warning("Falha ao listar os monitores; usando a última lista conhecida", exc_info=True)
+                    self._bus.publish(
+                        Event(EventKind.ERROR, f"Não foi possível listar os monitores: {exc}", EventLevel.WARNING)
+                    )
+                self._screens_failing = True
+                return self._screens
+            if self._screens_failing:
+                log.info("Lista de monitores normalizada")
+            self._screens_failing = False
+            if screens != self._screens:
+                log.info("Monitores: %s", ", ".join(f"{s.x},{s.y} {s.width}x{s.height}" for s in screens) or "nenhum")
+            self._screens = screens
         return self._screens
 
     def _mark_error(self, zone_ids: tuple[int, ...], message: str) -> None:
@@ -170,4 +204,5 @@ class ZoneMonitor:
             # Publica uma vez por episódio: o histórico não enche com o mesmo erro 20× por segundo.
             if is_new:
                 name = self._names.get(zone_id, "Zona")
+                log.warning("%s (id %s): %s", name, zone_id, message)
                 self._bus.publish(Event(EventKind.ERROR, f"{name}: {message}", EventLevel.WARNING))

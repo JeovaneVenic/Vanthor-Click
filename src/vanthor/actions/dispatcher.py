@@ -86,20 +86,32 @@ class ActionDispatcher:
         self._on_simulated_click = listener
 
     def arm(self, dry_run: bool = False, max_clicks_per_minute: int = 120) -> None:
-        """Prepara para executar ações. Chamado ao iniciar a automação."""
+        """Prepara para executar ações. Chamado ao iniciar a automação.
+
+        Cada execução ganha um sinal de parada NOVO. Antes, se a thread da execução anterior ainda
+        estivesse terminando uma sequência, ``arm`` voltava sem limpar a parada, e a fila descartava
+        em silêncio TODOS os cliques da nova execução (a cor era detectada, mas nada era clicado).
+        """
         with self._lock:
-            if self._thread is not None and self._thread.is_alive():
-                return
+            if self._thread is not None and self._thread.is_alive() and not self._halt.is_set():
+                return  # já armado e rodando
+            previous = self._thread
             self._dry_run = dry_run
             self._limiter = ClickRateLimiter(max_clicks_per_minute, self._clock)
-            self._halt.clear()
-            self._thread = threading.Thread(target=self._work, name="vanthor-actions", daemon=True)
+            self._halt = threading.Event()  # a thread antiga segue com o sinal dela (já acionado) e sai
+            self._queue.clear()
+            self._pending.clear()
+            self._thread = threading.Thread(target=self._work, args=(self._halt,), name="vanthor-actions", daemon=True)
             self._thread.start()
+        if previous is not None and previous.is_alive():
+            log.warning("A fila de ações anterior ainda estava terminando; a nova execução usa uma fila própria")
+        log.info("Fila de ações pronta (%s, até %s cliques/min)", "modo de teste" if dry_run else "cliques reais",
+                 max_clicks_per_minute)
 
     def halt(self) -> None:
         """Safety hook: interrompe tudo AGORA e solta entradas. Qualquer thread."""
-        self._halt.set()
         with self._lock:
+            self._halt.set()
             self._queue.clear()
             self._pending.clear()
             self._lock.notify_all()
@@ -135,31 +147,32 @@ class ActionDispatcher:
             return
         with self._lock:
             if self._halt.is_set():
+                log.warning("%s: ação descartada porque a fila de ações está parada", rule.name)
                 return
             if rule.id in self._pending:
-                log.debug("Ação de %s já está na fila; disparo ignorado", rule.name)
+                log.info("%s: a ação anterior ainda está na fila; este disparo foi ignorado", rule.name)
                 return
             self._pending.add(rule.id)
             self._queue.append(_Job(rule))
             self._lock.notify()
 
     # -- execução (thread de ações) ----------------------------------------------------------
-    def _work(self) -> None:
+    def _work(self, halt: threading.Event) -> None:
         while True:
             with self._lock:
-                while not self._queue and not self._halt.is_set():
+                while not halt.is_set() and (self._halt is not halt or not self._queue):
                     self._lock.wait()
-                if self._halt.is_set():
+                if halt.is_set():
                     return
                 job = self._queue.popleft()
                 self._pending.discard(job.rule.id)
             try:
                 if self._dry_run:
-                    self._simulate(job.rule)
+                    self._simulate(job.rule, halt)
                 else:
                     if self._controller is None:
                         self._controller = self._factory()
-                    self._execute(job.rule, self._controller)
+                    self._execute(job.rule, self._controller, halt)
             except Exception as exc:
                 log.exception("Falha ao executar a ação de %s", job.rule.name)
                 if self._controller is not None:
@@ -176,6 +189,8 @@ class ActionDispatcher:
             s for s in action.steps if isinstance(s, ClickStep) and not any(r.contains_point(s.x, s.y) for r in screens)
         ]
         if offscreen:
+            log.warning("%s: ponto %s,%s fora das telas %s; nada foi clicado", rule.name, offscreen[0].x,
+                        offscreen[0].y, screens)
             self._bus.publish(
                 Event(
                     EventKind.ERROR,
@@ -186,6 +201,8 @@ class ActionDispatcher:
             )
             return False
         if not self._limiter.try_take(action.clicks):
+            log.warning("%s: limite de %s cliques por minuto atingido; ação não executada", rule.name,
+                        self._limiter.limit)
             now = self._clock()
             if now - self._last_limit_notice >= _LIMIT_NOTICE_INTERVAL_S:
                 self._last_limit_notice = now
@@ -201,18 +218,19 @@ class ActionDispatcher:
             return False
         return True
 
-    def _simulate(self, rule: Rule) -> None:
+    def _simulate(self, rule: Rule, halt: threading.Event) -> None:
         if not self._preflight(rule):
             return
         interrupted = False
         for step in rule.action.steps:
-            if self._halt.is_set():
+            if halt.is_set():
                 interrupted = True
                 break
             if isinstance(step, ClickStep):
+                log.info("%s: clique simulado (%s) em %s,%s", rule.name, step.button.value, step.x, step.y)
                 if self._on_simulated_click is not None:
                     self._on_simulated_click(step.x, step.y, f"{rule.name}: clique simulado")
-            elif isinstance(step, WaitStep) and self._halt.wait(step.ms / 1000):
+            elif isinstance(step, WaitStep) and halt.wait(step.ms / 1000):
                 interrupted = True
                 break
         message = (
@@ -222,7 +240,7 @@ class ActionDispatcher:
         )
         self._bus.publish(Event(EventKind.SIMULATED_ACTION, message, rule_id=rule.id))
 
-    def _execute(self, rule: Rule, controller: InputController) -> None:
+    def _execute(self, rule: Rule, controller: InputController, halt: threading.Event) -> None:
         action = rule.action
         if not self._preflight(rule):
             return
@@ -232,15 +250,18 @@ class ActionDispatcher:
         interrupted = False
         try:
             for step in action.steps:
-                if self._halt.is_set():
+                if halt.is_set():
                     interrupted = True
                     break
                 if isinstance(step, ClickStep):
+                    log.info("%s: clique %s%s em %s,%s", rule.name, step.button.value,
+                             " duplo" if step.double else "", step.x, step.y)
                     controller.click(step)
                     clicks += 2 if step.double else 1
                 elif isinstance(step, KeyStep):
+                    log.info("%s: tecla %s", rule.name, step.combo)
                     controller.press(parse_combo(step.combo))
-                elif isinstance(step, WaitStep) and self._halt.wait(step.ms / 1000):
+                elif isinstance(step, WaitStep) and halt.wait(step.ms / 1000):
                     interrupted = True
                     break
         finally:

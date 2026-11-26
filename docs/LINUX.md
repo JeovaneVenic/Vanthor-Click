@@ -100,7 +100,9 @@ ligado e área de notificação. Não foi testado numa instalação física do M
   - o conta-gotas congela a tela antes de abrir;
   - a borda das zonas é desenhada por fora da zona.
   
-  Mesmo assim, não deixe a pílula "Vigiando" nem os destaques do modo de teste sobre uma zona observada.
+  Mesmo assim, não deixe a pílula "Vigiando", a janela do Vanthor nem os destaques do modo de teste
+  sobre uma zona observada. Se alguma janela do Vanthor cobrir uma zona durante a automação, o histórico
+  avisa. Veja [DIAGNOSTICO.md](DIAGNOSTICO.md).
 - **Wayland não é suportado.**
 - A tecla de emergência não registra uma combinação que outro programa já usa. O editor avisa quando
   isso acontece, como no Windows.

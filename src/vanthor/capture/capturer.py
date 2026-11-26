@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 
 import mss
@@ -34,9 +35,16 @@ class RegionCapturer:
             self._sct = mss.MSS()
         try:
             shot = self._sct.grab({"left": rect.x, "top": rect.y, "width": rect.width, "height": rect.height})
-        except mss.ScreenShotError as exc:
-            raise CaptureError(str(exc)) from exc
-        bgra = np.frombuffer(shot.bgra, dtype=np.uint8).reshape(shot.height, shot.width, 4)
+            bgra = np.frombuffer(shot.bgra, dtype=np.uint8).reshape(shot.height, shot.width, 4)
+        except Exception as exc:
+            # Depois de bloquear a tela, trocar a resolução ou religar um monitor, o contexto gráfico
+            # guardado pelo MSS pode ficar inválido PARA SEMPRE: reusá-lo faria toda captura seguinte
+            # falhar e a zona nunca mais seria vista. Descartamos a sessão; a próxima captura abre outra.
+            self._discard_session()
+            raise CaptureError(str(exc) or type(exc).__name__) from exc
+        if (shot.width, shot.height) != (rect.width, rect.height):
+            self._discard_session()
+            raise CaptureError(f"captura veio com {shot.width}×{shot.height}, esperado {rect.width}×{rect.height}")
         # BGRA → RGB contíguo (o detector da Fase 3 trabalha em RGB).
         return np.ascontiguousarray(bgra[:, :, 2::-1])
 
@@ -44,3 +52,12 @@ class RegionCapturer:
         if self._sct is not None:
             self._sct.close()
             self._sct = None
+
+    def _discard_session(self) -> None:
+        sct, self._sct = self._sct, None
+        if sct is not None:
+            try:
+                sct.close()
+            except Exception:
+                # A sessão já estava quebrada; o que importa é não reusá-la.
+                logging.getLogger(__name__).debug("Falha ao fechar sessão de captura inválida", exc_info=True)

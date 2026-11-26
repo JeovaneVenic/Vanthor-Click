@@ -70,6 +70,16 @@ def exclude_from_capture(hwnd: int) -> bool:
     return ok
 
 
+def is_excluded_from_capture(hwnd: int) -> bool:
+    """A janela já está escondida das capturas? (No Linux nunca: o X11 não tem esse recurso.)"""
+    if sys.platform != "win32":
+        return False
+    affinity = wintypes.DWORD(0)
+    if not ctypes.windll.user32.GetWindowDisplayAffinity(hwnd, ctypes.byref(affinity)):
+        return False
+    return affinity.value == _WDA_EXCLUDEFROMCAPTURE
+
+
 APP_MUTEX_NAME = "VanthorBotClickRunning"  # o instalador (AppMutex) usa o mesmo nome
 
 

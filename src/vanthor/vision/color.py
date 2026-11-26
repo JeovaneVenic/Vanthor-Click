@@ -161,6 +161,30 @@ def _match_hsv(image: NDArray[np.uint8], condition: ColorCondition) -> NDArray[n
     return np.asarray(ok)
 
 
+@dataclass(frozen=True, slots=True)
+class ClosestColor:
+    """Pixel da zona mais parecido com o alvo: diagnóstico de "por que não achou?"."""
+
+    color: RGB
+    distance: int  # maior diferença entre os canais R, G e B (a mesma régua da tolerância RGB)
+    x: int
+    y: int
+
+
+def closest_color(image: NDArray[np.uint8], target: RGB) -> ClosestColor | None:
+    """Acha o pixel mais próximo do alvo. Se a distância passa da tolerância, a cor NÃO está na zona.
+
+    Usa a régua do modo RGB nos dois modos, porque é a que o usuário entende ("faltaram 8 níveis").
+    """
+    if image.ndim != 3 or image.shape[0] == 0 or image.shape[1] == 0:
+        return None
+    diff = np.abs(image.astype(np.int16) - np.array(target, np.int16)).max(axis=2)
+    flat = int(np.argmin(diff))
+    y, x = divmod(flat, image.shape[1])
+    r, g, b = (int(c) for c in image[y, x])
+    return ClosestColor((r, g, b), int(diff[y, x]), x, y)
+
+
 def suggest_color(image: NDArray[np.uint8]) -> RGB:
     """Cor mais provável que o usuário quer vigiar: a predominante no miolo da zona.
 

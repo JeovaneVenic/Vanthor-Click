@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from vanthor import APP_NAME
 from vanthor.core.engine import EngineState
+from vanthor.ui.capture_guard import CaptureGuard
 from vanthor.ui.context import AppContext
 from vanthor.ui.pages.dashboard import DashboardPage
 from vanthor.ui.overlays.click_flash import ClickFlashes
@@ -112,6 +113,8 @@ class MainWindow(QMainWindow):
         self._indicator.open_requested.connect(self.bring_to_front)
         self._flashes = ClickFlashes()
         ctx.session.simulated_click.connect(self._flashes.flash)
+        # Avisa (no histórico) se uma janela do Vanthor cobrir uma zona vigiada: a captura veria a janela.
+        self._capture_guard = CaptureGuard(ctx.session, ctx.bus)
         self._tray = VanthorTray(
             ctx.session,
             open_window=self.bring_to_front,
