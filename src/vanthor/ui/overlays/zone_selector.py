@@ -30,6 +30,9 @@ from vanthor.ui.theme.tokens import Color
 from vanthor.winsys.desktop import exclude_from_capture
 
 _HANDLE = 9  # px lógicos
+# Zona nova já nasce desenhada (px lógicos): dá para só arrastar até o lugar, inclusive por acesso
+# remoto, onde desenhar arrastando nem sempre funciona bem. As setas também movem a zona.
+_DEFAULT_ZONE_LOGICAL = (200, 120)
 _DIM = QColor(8, 9, 10, 160)  # escuro o bastante para a zona "acender" por contraste
 
 
@@ -38,6 +41,28 @@ class _Drag(Enum):
     DRAW = auto()
     MOVE = auto()
     RESIZE = auto()
+
+
+def default_zone(monitors: list[MonitorMap]) -> tuple[MonitorMap | None, ScreenRect | None]:
+    """Zona inicial: um retângulo no centro do monitor onde está o mouse (ou do principal)."""
+    if not monitors:
+        return None, None
+    cursor = QCursor.pos()
+    monitor = next(
+        (m for m in monitors if _logical_contains(m, cursor.x(), cursor.y())),
+        None,
+    ) or next((m for m in monitors if m.primary), monitors[0])
+    bounds = monitor.physical
+    width = max(MIN_ZONE_SIDE, min(round(_DEFAULT_ZONE_LOGICAL[0] * monitor.scale), bounds.width))
+    height = max(MIN_ZONE_SIDE, min(round(_DEFAULT_ZONE_LOGICAL[1] * monitor.scale), bounds.height))
+    x = bounds.x + (bounds.width - width) // 2
+    y = bounds.y + (bounds.height - height) // 2
+    return monitor, ScreenRect(x, y, width, height)
+
+
+def _logical_contains(monitor: MonitorMap, x: float, y: float) -> bool:
+    lx, ly, lw, lh = monitor.rect_to_logical(monitor.physical)
+    return lx <= x < lx + lw and ly <= y < ly + lh
 
 
 class ZoneSelector(QObject):
@@ -57,6 +82,8 @@ class ZoneSelector(QObject):
             self.monitor = next((m for m in self.monitors if m.physical.contains_rect(initial)), None)
             if self.monitor is None:  # zona antiga fora das telas atuais: começa do zero
                 self.rect = None
+        if self.rect is None:
+            self.monitor, self.rect = default_zone(self.monitors)
         self._overlays: list[_SelectionOverlay] = []
         self._done = False
 
@@ -264,6 +291,10 @@ class _SelectionOverlay(QWidget):
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if event.button() != Qt.MouseButton.LeftButton:
             return
+        if self._drag is not _Drag.NONE:
+            # A posição do soltar é a que vale: por acesso remoto os movimentos chegam agrupados e o
+            # último pode se perder. Reaplica o arrasto com ela (mesma lógica do movimento).
+            self.mouseMoveEvent(event)
         rect = self._my_rect()
         if self._drag is _Drag.DRAW and rect is not None and (
             rect.width < MIN_ZONE_SIDE or rect.height < MIN_ZONE_SIDE
@@ -343,7 +374,7 @@ class _SelectionOverlay(QWidget):
         hint = (
             "Arraste para marcar a área que o Vanthor vai observar."
             if rect is None
-            else "Arraste para mover, use as alças para ajustar. Enter confirma, Esc cancela."
+            else "Arraste para mover (ou use as setas). Alças ou Ctrl+setas ajustam. Enter confirma, Esc cancela."
         )
         title = f"{self.selector.title}   {self.monitor.label}"
         self._banner(p, title, hint)

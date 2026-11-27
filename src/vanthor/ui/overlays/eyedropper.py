@@ -2,6 +2,11 @@
 
 A lupa mostra os pixels REAIS ao redor do cursor (capturados ao vivo), ampliados, com o pixel
 central marcado. A janela é invisível para a captura, então a lupa nunca enxerga a si mesma.
+
+Modo alvo (``draggable=True``, usado pelo seletor do ponto do clique): um alvo já aparece na tela e
+o usuário o arrasta (ou clica onde quiser, ou usa as setas) e confirma com Enter ou "Confirmar
+ponto". Nada é escolhido no primeiro clique: por acesso remoto, um clique "solto" no lugar exato
+é difícil, e arrastar e ajustar com as setas resolve.
 """
 
 from __future__ import annotations
@@ -12,7 +17,7 @@ import numpy as np
 
 from PySide6.QtCore import QObject, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QImage, QKeyEvent, QMouseEvent, QPainter, QPaintEvent, QPen
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
 
 from vanthor.capture.capturer import CaptureError, Image, RegionCapturer
 from vanthor.capture.geometry import MonitorMap, ScreenRect
@@ -25,6 +30,7 @@ from vanthor.winsys.desktop import capture_exclusion_supported, exclude_from_cap
 
 _RADIUS = 7  # pixels físicos de cada lado do central (lupa de 15×15)
 _ZOOM = 10
+_TARGET_GRAB = 28  # px lógicos: distância do alvo que ainda "pega" o alvo para arrastar
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,9 +53,14 @@ class Eyedropper(QObject):
         title: str = "Conta-gotas",
         hint: str = "Clique na cor que o Vanthor deve procurar. Esc cancela.",
         markers: tuple[Marker, ...] = (),
+        draggable: bool = False,
+        initial: tuple[int, int] | None = None,
     ) -> None:
         super().__init__()
         self.title, self.hint, self.markers = title, hint, markers
+        self.draggable = draggable
+        self._initial = initial
+        self.target: tuple[MonitorMap, int, int] | None = None  # só no modo alvo
         self._overlays: list[_EyedropperOverlay] = []
         self._capturer = RegionCapturer()
         self._frozen: list[tuple[ScreenRect, Image]] = []
@@ -73,9 +84,48 @@ class Eyedropper(QObject):
             overlay.show()
             exclude_from_capture(int(overlay.winId()))
             self._overlays.append(overlay)
-        target = next((o for o in self._overlays if o.geometry().contains(QCursor.pos())), self._overlays[0])
-        target.activateWindow()
-        target.setFocus()
+        if self.draggable:
+            self._place_initial_target()
+        focus = next((o for o in self._overlays if o.geometry().contains(QCursor.pos())), self._overlays[0])
+        if self.target is not None:
+            focus = next((o for o in self._overlays if o.monitor is self.target[0]), focus)
+        focus.activateWindow()
+        focus.raise_()
+        focus.setFocus()
+
+    # -- modo alvo ------------------------------------------------------------------------------
+    def _place_initial_target(self) -> None:
+        monitors = [o.monitor for o in self._overlays]
+        if not monitors:
+            return
+        if self._initial is not None:
+            x, y = self._initial
+            monitor = next((m for m in monitors if m.physical.contains_point(x, y)), None)
+            if monitor is not None:
+                self.set_target(monitor, x, y)
+                return
+        under_mouse = next((o.monitor for o in self._overlays if o.geometry().contains(QCursor.pos())), None)
+        monitor = under_mouse or next((m for m in monitors if m.primary), monitors[0])
+        bounds = monitor.physical
+        self.set_target(monitor, bounds.x + bounds.width // 2, bounds.y + bounds.height // 2)
+
+    def set_target(self, monitor: MonitorMap, x: int, y: int) -> None:
+        bounds = monitor.physical
+        x = min(max(bounds.x, x), bounds.right - 1)
+        y = min(max(bounds.y, y), bounds.bottom - 1)
+        self.target = (monitor, x, y)
+        for overlay in self._overlays:
+            overlay.sync_target()
+
+    def nudge_target(self, dx: int, dy: int) -> None:
+        if self.target is not None:
+            monitor, x, y = self.target
+            self.set_target(monitor, x + dx, y + dy)
+
+    def confirm_target(self) -> None:
+        if self.target is not None:
+            monitor, x, y = self.target
+            self.pick(monitor, x, y)
 
     def sample(self, monitor: MonitorMap, x: int, y: int) -> QImage | None:
         """Pixels ao redor de (x, y), presos às bordas do monitor."""
@@ -142,12 +192,84 @@ class _EyedropperOverlay(QWidget):
         self._cursor: tuple[int, int] | None = None
         self._local: QPointF | None = None
         self._sample: QImage | None = None
+        self._dragging = False
+        self._toolbar: QWidget | None = None
+        if owner.draggable:
+            self._build_toolbar()
 
+    def _build_toolbar(self) -> None:
+        bar_widget = QWidget(self)
+        bar_widget.setObjectName("PickerToolbar")
+        bar_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        bar_widget.setStyleSheet(
+            f"#PickerToolbar {{ background: {Color.SURFACE}; border: 1px solid {Color.LINE_STRONG};"
+            " border-radius: 12px; }"
+        )
+        bar = QHBoxLayout(bar_widget)
+        bar.setContentsMargins(6, 6, 6, 6)
+        bar.setSpacing(6)
+        cancel = QPushButton("Cancelar")
+        cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel.clicked.connect(self.owner.cancel)
+        confirm = QPushButton("Confirmar ponto")
+        confirm.setObjectName("Primary")
+        confirm.setCursor(Qt.CursorShape.PointingHandCursor)
+        confirm.setMinimumHeight(40)
+        confirm.clicked.connect(self.owner.confirm_target)
+        bar.addWidget(cancel)
+        bar.addWidget(confirm)
+        bar_widget.adjustSize()
+        bar_widget.hide()
+        self._toolbar = bar_widget
+
+    def _to_local(self, x: int, y: int) -> QPointF:
+        lx, ly = self.monitor.to_logical(x, y)
+        origin = self.geometry().topLeft()
+        return QPointF(lx - origin.x(), ly - origin.y())
+
+    def sync_target(self) -> None:
+        """Atualiza alvo, lupa e botões depois que o alvo mudou (em qualquer monitor)."""
+        target = self.owner.target
+        if target is None or target[0] is not self.monitor:
+            self._cursor = self._local = self._sample = None
+            if self._toolbar is not None:
+                self._toolbar.hide()
+            self.update()
+            return
+        _monitor, x, y = target
+        self._cursor = (x, y)
+        self._local = self._to_local(x, y)
+        self._sample = self.owner.sample(self.monitor, x, y)
+        if self._toolbar is not None:
+            tw, th = self._toolbar.width(), self._toolbar.height()
+            # À esquerda e abaixo do alvo (a lupa fica à direita), sem sair da tela.
+            bx = self._local.x() - tw - 24
+            if bx < 8:
+                bx = self._local.x() + 24 + (2 * _RADIUS + 1) * _ZOOM + 16
+            by = self._local.y() + 24
+            bx = min(max(8.0, bx), self.width() - tw - 8.0)
+            by = min(max(96.0, by), self.height() - th - 8.0)
+            self._toolbar.move(int(bx), int(by))
+            self._toolbar.show()
+            self._toolbar.raise_()
+        self.update()
+
+    def showEvent(self, event: object) -> None:  # noqa: D401
+        super().showEvent(event)  # type: ignore[arg-type]
+        if self.owner.draggable:
+            self.sync_target()
     def _to_phys(self, pos: QPointF) -> tuple[int, int]:
         origin = self.geometry().topLeft()
         return self.monitor.to_physical(origin.x() + pos.x(), origin.y() + pos.y())
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self.owner.draggable:
+            if self._dragging:
+                self.owner.set_target(self.monitor, *self._to_phys(event.position()))
+            else:
+                near = self._local is not None and _distance(event.position(), self._local) <= _TARGET_GRAB
+                self.setCursor(Qt.CursorShape.SizeAllCursor if near else Qt.CursorShape.CrossCursor)
+            return
         self._local = event.position()
         self._cursor = self._to_phys(self._local)
         self._sample = self.owner.sample(self.monitor, *self._cursor)
@@ -155,17 +277,48 @@ class _EyedropperOverlay(QWidget):
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
-            self.owner.pick(self.monitor, *self._to_phys(event.position()))
+            if self.owner.draggable:
+                # Pegar o alvo e arrastar, ou clicar em outro lugar para levá-lo até lá. Não confirma.
+                self._dragging = True
+                near = self._local is not None and _distance(event.position(), self._local) <= _TARGET_GRAB
+                if not near:
+                    self.owner.set_target(self.monitor, *self._to_phys(event.position()))
+                self.activateWindow()
+                self.setFocus()
+            else:
+                self.owner.pick(self.monitor, *self._to_phys(event.position()))
         elif event.button() == Qt.MouseButton.RightButton:
             self.owner.cancel()
 
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self._dragging:
+                # A posição do soltar é a que vale: por acesso remoto os movimentos chegam agrupados
+                # e o último pode se perder; sem isto o alvo pararia um pouco antes.
+                self.owner.set_target(self.monitor, *self._to_phys(event.position()))
+            self._dragging = False
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        if self.owner.draggable and event.button() == Qt.MouseButton.LeftButton:
+            self.owner.confirm_target()
+
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        if event.key() == Qt.Key.Key_Escape:
+        key = event.key()
+        if key == Qt.Key.Key_Escape:
             self.owner.cancel()
+        elif self.owner.draggable and key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.owner.confirm_target()
+        elif self.owner.draggable and key in (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down):
+            step = 10 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else 1
+            dx = {Qt.Key.Key_Left: -step, Qt.Key.Key_Right: step}.get(Qt.Key(key), 0)
+            dy = {Qt.Key.Key_Up: -step, Qt.Key.Key_Down: step}.get(Qt.Key(key), 0)
+            self.owner.nudge_target(dx, dy)
         else:
             super().keyPressEvent(event)
 
     def leaveEvent(self, _event: object) -> None:
+        if self.owner.draggable:
+            return  # o alvo fica onde está, mesmo com o mouse fora desta tela
         self._cursor = None
         self.update()
 
@@ -175,9 +328,26 @@ class _EyedropperOverlay(QWidget):
         p.fillRect(self.rect(), QColor(0, 0, 0, 1))
         self._markers(p)
         self._banner(p)
+        if self.owner.draggable and self._local is not None:
+            self._target(p)
         if self._cursor is not None and self._local is not None and self._sample is not None:
             self._loupe(p)
         p.end()
+
+    def _target(self, p: QPainter) -> None:
+        """O alvo do clique: onde o Vanthor vai clicar. Contorno escuro para aparecer em qualquer fundo."""
+        assert self._local is not None
+        c = self._local
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for color, width in (("#000000", 4.0), (Color.BRASA, 2.0)):
+            p.setPen(QPen(QColor(color), width))
+            p.drawEllipse(c, 14, 14)
+            p.drawLine(QPointF(c.x() - 22, c.y()), QPointF(c.x() - 5, c.y()))
+            p.drawLine(QPointF(c.x() + 5, c.y()), QPointF(c.x() + 22, c.y()))
+            p.drawLine(QPointF(c.x(), c.y() - 22), QPointF(c.x(), c.y() - 5))
+            p.drawLine(QPointF(c.x(), c.y() + 5), QPointF(c.x(), c.y() + 22))
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
 
     def _loupe(self, p: QPainter) -> None:
         assert self._sample is not None and self._local is not None and self._cursor is not None
@@ -279,3 +449,7 @@ class _EyedropperOverlay(QWidget):
         p.setFont(hint_font)
         p.drawText(box.adjusted(20, 32, -20, -8), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, hint)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+
+
+def _distance(a: QPointF, b: QPointF) -> float:
+    return float(((a.x() - b.x()) ** 2 + (a.y() - b.y()) ** 2) ** 0.5)

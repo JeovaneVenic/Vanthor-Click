@@ -171,7 +171,11 @@ class ActionEditor(QWidget):
         pick.setObjectName("Primary")
         pick.setIcon(icons.icon("crosshair", Color.ON_BRASA, 16))
         pick.setCursor(Qt.CursorShape.PointingHandCursor)
-        pick.clicked.connect(lambda: self.pick_point(self._set_click_point))
+        pick.clicked.connect(
+            lambda: self.pick_point(
+                self._set_click_point, (self._click.x, self._click.y) if self._click is not None else None
+            )
+        )
         row.addWidget(pick)
         layout.addLayout(row)
 
@@ -419,8 +423,8 @@ class ActionEditor(QWidget):
             repick = QPushButton("Mudar ponto")
             repick.setCursor(Qt.CursorShape.PointingHandCursor)
             repick.clicked.connect(
-                lambda _=False, i=index: self.pick_point(
-                    lambda x, y: self._replace(i, self._with_point(i, x, y), rerender=True)
+                lambda _=False, i=index, s=step: self.pick_point(
+                    lambda x, y: self._replace(i, self._with_point(i, x, y), rerender=True), (s.x, s.y)
                 )
             )
             row.addWidget(repick)
@@ -488,13 +492,16 @@ class ActionEditor(QWidget):
             found.append(Marker(ScreenRect(point.x, point.y, 1, 1), Color.BRASA, label))
         return tuple(found)
 
-    def pick_point(self, on_pick: Callable[[int, int], None]) -> None:
+    def pick_point(self, on_pick: Callable[[int, int], None], initial: tuple[int, int] | None = None) -> None:
         if self._picker is not None:
             return
+        # Alvo arrastável: funciona também por acesso remoto, onde acertar um clique exato é difícil.
         picker = Eyedropper(
             title="Ponto do clique",
-            hint="Clique exatamente onde o Vanthor deve clicar. Esc cancela.",
+            hint="Arraste o alvo até o ponto (ou clique lá). Setas ajustam. Enter confirma, Esc cancela.",
             markers=self.markers(),
+            draggable=True,
+            initial=initial,
         )
 
         def picked(_rgb: object, x: int, y: int) -> None:
